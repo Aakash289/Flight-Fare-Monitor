@@ -5,7 +5,7 @@ It uses the Kiwi.com Tequila API to fetch current fares, compares them against y
 
 The problem it solves
 
-Airline prices are volatile—they can change multiple times per day. Typical booking sites don’t proactively tell you when a fare on your exact route and dates gets cheaper. That leads to:
+Airline prices are volatile, they can change multiple times per day. Typical booking sites don’t proactively tell you when a fare on your exact route and dates gets cheaper. That leads to:
 
 Constant manual re-checking (easy to forget, easy to miss dips).
 
@@ -48,7 +48,6 @@ Kicks off the run once per hour (you can change the cadence).
 
 Watchlist (Postgres)
 Runs a SELECT to fetch each route/date you’re tracking (e.g., origin, destination, departure_date, return_date, round_trip, adults, bags, max_stops, cabin, currency, threshold_pct, last_price, slack_webhook_url, landing_url).
-No hardcoding—your watchlist lives in the DB.
 
 Build Tequila URL (Code)
 Builds a Kiwi Tequila /v2/search URL per row: converts dates to DD/MM/YYYY, sets one-way/round-trip, cabin, stops, passengers, currency, etc.
