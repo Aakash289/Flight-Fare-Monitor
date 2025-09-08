@@ -1,0 +1,307 @@
+{
+  "name": "Flight Fare Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1296,
+        304
+      ],
+      "id": "d0e6ac2e-ca48-45e9-80e0-018e76c6c4ac",
+      "name": "Schedule Trigger — every 1h"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Kiwi Tequila search URL per item (robust)\\n// Converts YYYY-MM-DD -> DD/MM/YYYY (Tequila requirement)\\n\\nfunction toKiwiDate(iso) {\\n  if (!iso) return '';\\n  const [y, m, d] = String(iso).split('-');\\n  if (!y || !m || !d) return '';\\n  return `${d}/${m}/${y}`;\\n}\\n\\nfunction addDaysISO(iso, days) {\\n  if (!iso) return '';\\n  const [y, m, d] = String(iso).split('-').map(Number);\\n  const dt = new Date(Date.UTC(y, m - 1, d));\\n  dt.setUTCDate(dt.getUTCDate() + Number(days || 0));\\n  const yy = dt.getUTCFullYear();\\n  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');\\n  const dd = String(dt.getUTCDate()).padStart(2, '0');\\n  return `${yy}-${mm}-${dd}`;\\n}\\n\\nfunction clamp(n, min, max) {\\n  const x = Number(n);\\n  if (!isFinite(x)) return min;\\n  return Math.max(min, Math.min(max, x));\\n}\\n\\nconst cabinMap = { m: 'M', w: 'W', c: 'C', f: 'F', M: 'M', W: 'W', C: 'C', F: 'F' };\\nconst defaultCurrency = $env.DEFAULT_CURRENCY || 'USD';\\nconst defaultLimit = Number($env.TEQUILA_LIMIT || 5);\\n\\nreturn items\\n  .map(item => {\\n    const i = item.json || {};\\n\\n    // REQUIRED fields\\n    if (!i.origin || !i.destination || !i.departure_date) {\\n      return null; // skip invalid records\\n    }\\n\\n    const origin = String(i.origin).trim().toUpperCase();\\n    const destination = String(i.destination).trim().toUpperCase();\\n\\n    // Date flexibility window (in days)\\n    const depFlex = Number(i.date_flex_days || 0);\\n    const depFromISO = depFlex ? addDaysISO(i.departure_date, -depFlex) : i.departure_date;\\n    const depToISO   = depFlex ? addDaysISO(i.departure_date,  depFlex) : i.departure_date;\\n\\n    const params = new URLSearchParams();\\n    params.set('fly_from', origin);\\n    params.set('fly_to', destination);\\n    params.set('date_from', toKiwiDate(depFromISO));\\n    params.set('date_to',   toKiwiDate(depToISO));\\n\\n    // Round-trip vs one-way\\n    const isRT = i.round_trip === true || i.round_trip === 'true' || i.round_trip === 1 || i.round_trip === '1';\\n\\n    if (isRT && i.return_date) {\\n      const retFlex = Number(i.return_flex_days || 0);\\n      const retFromISO = retFlex ? addDaysISO(i.return_date, -retFlex) : i.return_date;\\n      const retToISO   = retFlex ? addDaysISO(i.return_date,  retFlex) : i.return_date;\\n      params.set('return_from', toKiwiDate(retFromISO));\\n      params.set('return_to',   toKiwiDate(retToISO));\\n      params.set('flight_type', 'round');\\n    } else {\\n      params.set('flight_type', 'oneway');\\n    }\\n\\n    // Pax & cabin\\n    params.set('curr', i.currency || defaultCurrency);\\n    params.set('adults', String(i.adults ?? 1));\\n    if (i.children != null && i.children !== '') params.set('children', String(i.children));\\n    if (i.infants  != null && i.infants  !== '') params.set('infants',  String(i.infants));\\n    const cabin = cabinMap[i.cabin] || 'M';\\n    params.set('selected_cabins', cabin);\\n\\n    // Stops\\n    if (i.nonstop_only === true || i.nonstop_only === 'true' || i.max_stops === 0 || i.max_stops === '0') {\\n      params.set('max_stopovers', '0');\\n    } else if (i.max_stops != null && i.max_stops !== '') {\\n      const ms = clamp(i.max_stops, 0, 2);\\n      params.set('max_stopovers', String(ms));\\n    }\\n\\n    // Airport-change preferences (default: disallow)\\n    const allowChange = (i.allow_change_airports === true || i.allow_change_airports === 'true');\\n    params.set('conn_on_diff_airport', allowChange ? '1' : '0');\\n    params.set('ret_from_diff_airport', allowChange ? '1' : '0');\\n    params.set('ret_to_diff_airport',   allowChange ? '1' : '0');\\n\\n    // Market / city grouping (optional)\\n    if (i.partner_market) params.set('partner_market', String(i.partner_market).toUpperCase());\\n    if (i.one_for_city != null) params.set('one_for_city', String(i.one_for_city ? 1 : 0));\\n\\n    // Sorting & limits\\n    params.set('sort', 'price');\\n    params.set('limit', String(defaultLimit));\\n    params.set('one_per_date', '0');\\n\\n    const tequila_params = Object.fromEntries(params.entries());\\n    const tequila_url = `https://api.tequila.kiwi.com/v2/search?${params.toString()}`;\\n\\n    return { json: { ...i, tequila_url, tequila_params } };\\n  })\\n  .filter(Boolean);\\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        304
+      ],
+      "id": "35a75d0a-4c68-44e7-bc68-8038049b77bf",
+      "name": "Build Tequila URL"
+    },
+    {
+      "parameters": {
+        "url": "={{$json.tequila_url}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -672,
+        304
+      ],
+      "id": "a6ebeb50-348e-42b6-ac12-349f675dee4f",
+      "name": "HTTP — Tequila Search"
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        304
+      ],
+      "id": "af7791f1-1d5d-4c44-b24f-fa39eeed04f0",
+      "name": "Merge (item + response)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const i = item.json || {};\n\n  // Tequila response handling\n  const data = Array.isArray(i.data)\n    ? i.data\n    : (Array.isArray(i.body?.data) ? i.body.data : []);\n  const best = data?.[0] ?? null;\n\n  const basePrice = best?.price ?? null;\n  const adults = Number(i.adults ?? 1);\n  const bags = Number(i.bags ?? 0);\n\n  // Add baggage cost if requested\n  let bagPrice = 0;\n  if (best && bags > 0 && best.bags_price) {\n    const bp = best.bags_price[String(bags)] ?? 0;\n    bagPrice = Number(bp) * adults;\n  }\n\n  const totalPrice = basePrice !== null ? Number(basePrice) + bagPrice : null;\n  const lastPrice  = i.last_price != null ? Number(i.last_price) : null;\n\n  // ---- FIXED THRESHOLD = 20% ----\n  const threshold = 20;\n\n  // Compute drop\n  let dropPct = 0;\n  let isDrop = false;\n  if (\n    lastPrice && totalPrice !== null &&\n    isFinite(lastPrice) && lastPrice > 0 &&\n    isFinite(threshold)\n  ) {\n    dropPct = ((lastPrice - totalPrice) / lastPrice) * 100;\n    isDrop = dropPct >= threshold;\n  }\n\n  const deepLink = best?.deep_link || null;\n  const summary  = `${i.origin || ''} → ${i.destination || ''} ${i.round_trip ? '(RT)' : ''}`.trim();\n  const when     = i.return_date ? `${i.departure_date} to ${i.return_date}` : i.departure_date;\n  const currency = i.currency || 'USD';\n\n  const alertText = isDrop\n    ? `✈️ Fare drop for ${summary} on ${when}. Old: ${lastPrice?.toFixed?.(0)} ${currency} → ` +\n      `New: ${totalPrice?.toFixed?.(0)} ${currency} (−${dropPct.toFixed(1)}%).\\n${deepLink ? deepLink : ''}`\n    : '';\n\n  return {\n    json: {\n      ...i,\n      current_price: totalPrice,\n      base_price: basePrice,\n      bag_price: bagPrice,\n      drop_pct: dropPct,\n      threshold_pct_used: threshold, // will show 20\n      is_drop: isDrop,\n      deep_link: deepLink,\n      alert_text: alertText\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        304
+      ],
+      "id": "a4d53da8-7747-48eb-b2a7-208d3295148d",
+      "name": "Normalize & Compute Drop"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "d931938f-8225-460a-99d9-76a475aedd2b",
+              "leftValue": "=={{ $json.drop_pct }}",
+              "rightValue": 20,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        304
+      ],
+      "id": "e600580c-ea1c-46e4-ad79-0e39506cf6f7",
+      "name": "IF — drop ≥ threshold?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.slack_webhook_url || $env.SLACK_WEBHOOK_URL}}",
+              "operation": "isEmpty"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        208,
+        288
+      ],
+      "id": "9f2996cf-437d-434a-8493-7f3cbee9b2a8",
+      "name": "IF — has Slack URL?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.slack_webhook_url || $env.SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        448,
+        304
+      ],
+      "id": "193646f8-7104-4d55-b3c5-2621984bed89",
+      "name": "HTTP — Slack Webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{$json.landing_url ? $json.landing_url + ( $json.landing_url.includes('?') ? '&' : '?' ) + 'refresh=1' : ''}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        688,
+        304
+      ],
+      "id": "cd02f166-21fa-48a8-ade0-d8a5018b72cd",
+      "name": "HTTP — Refresh Landing (optional)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  id,                              -- optional but handy\n  origin,\n  destination,\n  to_char(departure_date, 'YYYY-MM-DD') AS departure_date,\n  to_char(return_date,    'YYYY-MM-DD') AS return_date,\n  COALESCE(round_trip, true)              AS round_trip,\n  COALESCE(cabin, 'M')                    AS cabin,\n  COALESCE(adults, 1)                     AS adults,\n  COALESCE(bags, 0)                       AS bags,\n  max_stops,\n  COALESCE(currency, 'USD')               AS currency,\n  threshold_pct,\n  last_price,\n  slack_webhook_url,\n  landing_url\nFROM watchlist\nWHERE active IS TRUE;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1088,
+        304
+      ],
+      "id": "39d74f6b-ba93-4451-9858-734ca3b0f583",
+      "name": "Watchlist",
+      "credentials": {
+        "postgres": {
+          "id": "KdOvWQpeorjuzv9S",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Build Tequila URL": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Tequila Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge (item + response)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Tequila Search": {
+      "main": [
+        [
+          {
+            "node": "Merge (item + response)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge (item + response)": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Compute Drop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Compute Drop": {
+      "main": [
+        [
+          {
+            "node": "IF — drop ≥ threshold?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — drop ≥ threshold?": {
+      "main": [
+        [
+          {
+            "node": "IF — has Slack URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — has Slack URL?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "HTTP — Slack Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Slack Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Refresh Landing (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger — every 1h": {
+      "main": [
+        [
+          {
+            "node": "Watchlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watchlist": {
+      "main": [
+        [
+          {
+            "node": "Build Tequila URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "afc7585c-0026-4cbc-ac0e-ee1f5ec3bd01",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb9045008a9cc013cfb89e5d4504a5822610a53295d2b482c4020229a151311e"
+  },
+  "id": "dKqPHEnk4ZJti652",
+  "tags": []
+}
